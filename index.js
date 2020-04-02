@@ -27,20 +27,28 @@ app.command('/spygame', async ({command, ack, respond}) => {
 
     const teamId = command.team_id;
     const channelId = command.channel_id;
-    const channel = await SlackChannel.fetch(teamId, channelId);
-    const game = (channel.gameUuid ? await SpyGame.fetch(channel.gameUuid) : null);
+
+    let channel, game;
+
+    try {
+        channel = await SlackChannel.fetch(teamId, channelId);
+        game = (channel.gameUuid ? await SpyGame.fetch(channel.gameUuid) : null);
+    } catch (err) {
+        console.error(err);
+        if (err instanceof SlackGameError) respond(err.slackMessage);
+    }
 
     respond(messages.manageGame(game));
 });
 
 // INTERACTIVE MESSAGES SERVER
-app.action('new_game', async ({action, ack, respond, say}) => {
-    console.log(`ACTION: new_game\n${JSON.stringify(action, null, 2)}`);
+app.action('new_game', async ({body, ack, respond, say}) => {
+    console.log(`ACTION: new_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game;
 
@@ -51,19 +59,20 @@ app.action('new_game', async ({action, ack, respond, say}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) respond(err.slackMessage);
+        return;
     }
 
     respond(messages.gameCreated());
-    say(messages.joinGame(hasJoinBtn=true, hasCancelBtn=true));
+    say(messages.joinGame(game));
 });
 
-app.action('join_game', async ({action, ack, respond, say, context}) => {
-    console.log(`ACTION: join_game\n${JSON.stringify(action, null, 2)}`);
+app.action('join_game', async ({body, ack, respond, say, context}) => {
+    console.log(`ACTION: join_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game;
 
@@ -78,24 +87,50 @@ app.action('join_game', async ({action, ack, respond, say, context}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
     }
 
     respond(messages.joinGame(game));
-    say(message.userJoinedGame(userId));
+    say(messages.userJoinedGame(userId));
 });
 
-app.action('cancel_game', async ({action, ack}) => {
-    console.log(`ACTION: cancel_game\n${JSON.stringify(action, null, 2)}`);
+app.action('cancel_game', async ({body, ack, respond}) => {
+    console.log(`ACTION: cancel_game\n${JSON.stringify(body, null, 2)}`);
     ack();
+
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
+
+    let channel, game;
+
+    try {
+        channel = await SlackChannel.fetch(teamId, channelId);
+        
+        game = await SpyGame.fetch(channel.gameUuid);
+        if (!game)
+            throw new SlackGameError(`Something went wrong - Game no longer available`, {teamId, channelId, userId});
+
+        await game.cancelGame(userId);
+        await channel.removeGame();
+
+    } catch (err) {
+        console.error(err);
+        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
+    }
+
+    respond(messages.gameCancelled());
+    say(messages.gameCancelledBy(userId));
 });
 
-app.action('start_game', async ({action, ack, respond, say, context}) => {
-    console.log(`ACTION: start_game\n${JSON.stringify(action, null, 2)}`);
+app.action('start_game', async ({body, ack, respond, say, context}) => {
+    console.log(`ACTION: start_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game, mission;
 
@@ -112,6 +147,7 @@ app.action('start_game', async ({action, ack, respond, say, context}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
     }
 
     respond(messages.gameStarted());
@@ -130,13 +166,13 @@ app.action('start_game', async ({action, ack, respond, say, context}) => {
         .forEach(player => postEphemeral(channel, player, context, messages.playerIsChoosingTeam(mission.leader)));
 });
 
-app.action('choose_team', async ({action, ack, respond, context}) => {
-    console.log(`ACTION: choose_team\n${JSON.stringify(action, null, 2)}`);
+app.action('choose_team', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: choose_team\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game, mission;
 
@@ -157,19 +193,20 @@ app.action('choose_team', async ({action, ack, respond, context}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
     }
 
     respond(messages.teamChoosen());
     game.players.forEach(player => postEphemeral(channel, player, context, messages.voteOnTeam(mission)));
 });
 
-app.action('vote_on_team', async ({action}) => {
-    console.log(`ACTION: vote_on_team\n${JSON.stringify(action, null, 2)}`);
+app.action('vote_on_team', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: vote_on_team\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game, mission, vote, nextMission;
 
@@ -184,7 +221,7 @@ app.action('vote_on_team', async ({action}) => {
         if (!mission)
             throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
 
-        vote = (action.actions[0].value === 'yes' ? true : false);
+        vote = (body.actions[0].value === 'yes' ? true : false);
         await mission.addTeamVote(userId, vote);
         if (mission.isTeamVotingComplete && !mission.isTeamAccepted)
             nextMission = await game.startNewMission();
@@ -192,6 +229,7 @@ app.action('vote_on_team', async ({action}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
     }
 
     respond(messages.votedFor(vote));
@@ -210,13 +248,13 @@ app.action('vote_on_team', async ({action}) => {
     }
 });
 
-app.action('vote_on_mission', async ({action}) => {
-    console.log(`ACTION: vote_on_mission\n${JSON.stringify(action, null, 2)}`);
+app.action('vote_on_mission', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: vote_on_mission\n${JSON.stringify(body, null, 2)}`);
     ack();
 
-    const teamId = action.team.id;
-    const channelId = action.channel.id;
-    const userId = action.user.id;
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
 
     let channel, game, mission, vote, nextMission;
 
@@ -231,7 +269,7 @@ app.action('vote_on_mission', async ({action}) => {
         if (!mission)
             throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
 
-        vote = (action.actions[0].value === 'yes' ? true : false);
+        vote = (body.actions[0].value === 'yes' ? true : false);
         await mission.addMissionVote(userId, vote);
 
         if (mission.isMissionComplete)
@@ -244,6 +282,7 @@ app.action('vote_on_mission', async ({action}) => {
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
     }
 
     respond(messages.votedForMission(vote));

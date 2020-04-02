@@ -2,6 +2,10 @@ const { MAX_NUM_PLAYERS, MIN_NUM_PLAYERS } = require('./constants');
 
 const gameCreated = () => ({text: `Game created!`});
 
+const gameCancelled = () => ({text: `Game cancelled.`});
+
+const gameCancelledBy = (userId) => ({text: `Game cancelled by <@${userId}>`});
+
 const manageGame = (game) => {
     if (game) {
         return {text: `A Game is already in progress in this channel. Please wait until it's over.`};
@@ -46,7 +50,7 @@ const startGameBtn = () => ({
 });
 
 const joinGame = (game) => {
-    const currentPlayersText = game.players.map(userId => ` • <@${userId}>`).join('\n');
+    const currentPlayersText = Array.from(game.players).map(userId => ` • <@${userId}>`).join('\n');
 
     let buttons, message;
     if (game.players.size >= MAX_NUM_PLAYERS) {
@@ -319,3 +323,28 @@ const gameOver = (game) => ({
         })  
     ]
 });
+
+module.exports = {
+    manageGame,
+    gameCreated,
+    gameCancelled,
+    gameCancelledBy,
+    joinGame,
+    gameStarted,
+    gameStartedBy,
+    youAreASpy,
+    youAreAGoodGuy,
+    gameSummary,
+    chooseTeam,
+    playerIsChoosingTeam,
+    teamChoosen,
+    voteOnTeam,
+    votedForTeam,
+    teamVoteResults,
+    teamIsVotingOnMission,
+    voteOnMission,
+    votedForMission,
+    missionVoteResults,
+    gameOver,
+    userJoinedGame
+}

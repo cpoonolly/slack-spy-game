@@ -1,5 +1,5 @@
 const redis = new (require("ioredis"))();
-const uuid = require('uuid/v4');
+const { v4: uuid } = require('uuid');
 const _ = require('lodash');
 
 const { GAME_CONFIG_BY_NUM_PLAYERS, GAME_STAGE, MISSION_STAGES } = require('./constants');
@@ -89,10 +89,6 @@ class SpyGame {
         this.missionsLost = new Set(missionsLost || []);
     }
 
-    get currentMission() {
-        return (this.missions.length ? _.last(this.missions): null)
-    }
-
     get gameConfig() {
         return GAME_CONFIG_BY_NUM_PLAYERS[this.players.size];
     }
@@ -161,10 +157,10 @@ class SpyGame {
         this.stage = GAME_STAGE.IN_PROGRESS;
         await redis.set(`game:${gameUuid}:stage`, this.stage);
         
-        this.spies = _.sampleSize(players, gameConfig.numSpies);
+        this.spies = _.sampleSize(this.players, this.numSpies);
         await Promise.all(this.spies.map(player => redis.sadd(`game:${gameUuid}:spies`, player)));
 
-        this.leaderQueue = _.shuffle(Array.from(players));
+        this.leaderQueue = _.shuffle(Array.from(this.players));
         await Promise.all(this.leaderQueue.map(player => redis.rpush(`game:${gameUuid}:leader_queue`, player)));
     }
 
@@ -219,11 +215,11 @@ class SpyGame {
         const {gameUuid} = this;
         
         if (!this.players.has(userId))
-            throw new SlackGameError(`Only players in the game can cancel it.`, {gameUuid, userId});
+            throw new SlackGameError(`Only players in the game can cancel it.`, {gameUuid, userId, players: JSON.stringify(this.players)});
         if (this.stage === GAME_STAGE.GAME_CANCELLED)
             throw new SlackGameError(`Game has already been cancelled.`, {gameUuid, userId});
 
-        await redis.set(`mission:${missionUuid}:stage`, GAME_STAGE.GAME_CANCELLED);
+        await redis.set(`game:${gameUuid}:stage`, GAME_STAGE.GAME_CANCELLED);
     }
 
     static async fetch(gameUuid) {
@@ -340,8 +336,8 @@ class Mission {
         if (this.stage !== MISSION_STAGES.CHOOSING_TEAM)
             throw new SlackGameError(`No longer choosing team for Mission.`, {userId, missionUuid});
 
-        await Promise.all(team.map(player => await redis.sadd(`mission:${this.missionUuid}:team`, player)));
-        await redis.set(`mission:${this.missionUuid}:stage`, MISSION_STAGES.VOTING_ON_TEAM);
+        await Promise.all(team.map(player => redis.sadd(`mission:${missionUuid}:team`, player)));
+        await redis.set(`mission:${missionUuid}:stage`, MISSION_STAGES.VOTING_ON_TEAM);
     }
 
     async addTeamVote(userId, vote) {
@@ -420,3 +416,10 @@ class SlackGameError extends Error {
         return {text: this.message}
     }
 }
+
+module.exports = {
+    SlackChannel,
+    SpyGame,
+    Mission,
+    SlackGameError,
+};
