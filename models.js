@@ -39,21 +39,26 @@ class SlackChannel {
     }
 
     /* HERE BE CRAPPY TRANSACTION MANAGEMENT */
-    async lockChannel(teamId, channel) {
+    async lockChannel() {
+        const {teamId, channelId} = this;
         let lockAquired = false;
+
+        if (!teamId || !channelId)
+            throw Error(`Invalid channel - ${teamId}:${channelId}`);
     
         for (let numRetries = 0; numRetries < PESSIMISTIC_LOCK_MAX_RETRIES; numRetries++) {
-            lockAquired = await redis.setnx(`slack_channel:${teamId}:${channel}:lock`, true);
+            lockAquired = await redis.setnx(`slack_channel:${teamId}:${channelId}:lock`, true);
             if (lockAquired) return;
     
             await sleep(PESSIMISTIC_LOCK_RETRY_TIME);
         }
     
-        throw Error(`Failed to obtain lock - ${teamId}:${channel}`);
+        throw Error(`Failed to obtain lock - ${teamId}:${channelId}`);
     }
     
-    async unlockChannel(teamId, channel) {
-        await redis.del(`slack_channel:${teamId}:${channel}:lock`);
+    async unlockChannel() {
+        const {teamId, channelId} = this;
+        await redis.del(`slack_channel:${teamId}:${channelId}:lock`);
     }
 
     static async fetch(teamId, channelId) {
@@ -114,7 +119,7 @@ class SpyGame {
     }
 
     get currentMissionNumVotesForFail() {
-        return this.gameConfig.missionNumNoVotesForFail;
+        return this.gameConfig.missionNumNoVotesForFail[this.numMissionsCompleted];
     }
 
     get currentNumMissionFails() {
@@ -157,11 +162,17 @@ class SpyGame {
         this.stage = GAME_STAGE.IN_PROGRESS;
         await redis.set(`game:${gameUuid}:stage`, this.stage);
         
-        this.spies = _.sampleSize(this.players, this.numSpies);
-        await Promise.all(this.spies.map(player => redis.sadd(`game:${gameUuid}:spies`, player)));
+        this.spies = new Set(_.sampleSize(Array.from(this.players), this.numSpies));
+        console.log(`Spies chosen: ${JSON.stringify(Array.from(this.spies))}`);
+        await Promise.all(Array.from(this.spies).map(player => redis.sadd(`game:${gameUuid}:spies`, player)));
+        console.log(`Spies set: ${await redis.smembers(`game:${gameUuid}:spies`)}`);
 
         this.leaderQueue = _.shuffle(Array.from(this.players));
         await Promise.all(this.leaderQueue.map(player => redis.rpush(`game:${gameUuid}:leader_queue`, player)));
+    }
+
+    async discardCurrentMission() {
+        await redis.del(`game:${this.gameUuid}:current_mission`)
     }
 
     async startNewMission() {
@@ -173,11 +184,11 @@ class SpyGame {
         await redis.rpush(`game:${gameUuid}:missions`, missionUuid);
         
         const leader = await redis.lpop(`game:${gameUuid}:leader_queue`);
-        await redis.rpush(`game:${gameUuid}:leader_queue`);
+        await redis.rpush(`game:${gameUuid}:leader_queue`, leader);
         await redis.set(`mission:${missionUuid}:leader`, leader);
         
         const voters = Array.from(this.players);
-        await Promise.all(voters.map(player => redis.sadd(`game:${gameUuid}:voters`, player)));
+        await Promise.all(voters.map(player => redis.sadd(`mission:${missionUuid}:voters`, player)));
 
         await redis.set(`mission:${missionUuid}:mission_num`, this.numMissionsCompleted);
         await redis.set(`mission:${missionUuid}:stage`, MISSION_STAGES.CHOOSING_TEAM);
@@ -195,8 +206,8 @@ class SpyGame {
         if (this.currentMission !== missionUuid)
             throw new SlackGameError(`Something went wrong.`, {gameUuid, missionUuid, msg: 'Attempt to complete a non current mission.'});
 
-        this.completeMission.add(missionUuid);
         await redis.sadd(`mission:${missionUuid}:completed_missions`, missionUuid);
+        this.missionsCompleted = new Set(await redis.smembers(`mission:${missionUuid}:completed_missions`));
 
         if (mission.isMissionSuccessful) {
             this.missionsWon.add(missionUuid);
@@ -215,7 +226,7 @@ class SpyGame {
         const {gameUuid} = this;
         
         if (!this.players.has(userId))
-            throw new SlackGameError(`Only players in the game can cancel it.`, {gameUuid, userId, players: JSON.stringify(this.players)});
+            throw new SlackGameError(`Only players in the game can cancel it.`, {gameUuid, userId, players: JSON.stringify(Array.from(this.players))});
         if (this.stage === GAME_STAGE.GAME_CANCELLED)
             throw new SlackGameError(`Game has already been cancelled.`, {gameUuid, userId});
 
@@ -263,32 +274,31 @@ class Mission {
         votesForMission
     }) {
         this.missionUuid = missionUuid;
-        this.missionNum = missionNum || null;
+        this.missionNum = parseInt(missionNum) || null;
         this.stage = stage || null;
         this.leader = leader || null;
-        this.teamSize = teamSize || null;
+        this.teamSize = parseInt(teamSize) || null;
         
         this.team = new Set(team || []);
         this.voters = new Set(voters || []);
-        this.winner = winner || null;
         this.votesForTeam = votesForTeam || {};
         this.votesForMission = votesForMission || {};
     }
 
     get playersWhoVotedYesForTeam() {
-        return Object.keys(this.votesForTeam).filter(player => this.votesForTeam[player]);
+        return Object.keys(this.votesForTeam).filter(player => this.votesForTeam[player] === 'true');
     }
 
     get playersWhoVotedNoForTeam() {
-        return Object.keys(this.votesForTeam).filter(player => !this.votesForTeam[player]);
+        return Object.keys(this.votesForTeam).filter(player => this.votesForTeam[player] !== 'true');
     }
 
     get playersWhoVotedYesForMission() {
-        return Object.keys(this.votesForMission).filter(player => this.votesForMission[player]);
+        return Object.keys(this.votesForMission).filter(player => this.votesForMission[player] === 'true');
     }
 
     get playersWhoVotedNoForMission() {
-        return Object.keys(this.votesForMission).filter(player => !this.votesForMission[player]);
+        return Object.keys(this.votesForMission).filter(player => !this.votesForMission[player] !== 'true');
     }
 
     get isTeamVoteComplete() {
@@ -338,6 +348,9 @@ class Mission {
 
         await Promise.all(team.map(player => redis.sadd(`mission:${missionUuid}:team`, player)));
         await redis.set(`mission:${missionUuid}:stage`, MISSION_STAGES.VOTING_ON_TEAM);
+        
+        this.team = new Set(await redis.smembers(`mission:${missionUuid}:team`));
+        this.stage = await redis.get(`mission:${missionUuid}:stage`);
     }
 
     async addTeamVote(userId, vote) {
@@ -351,13 +364,15 @@ class Mission {
 
         await redis.hset(`mission:${missionUuid}:votes_for_team`, userId, vote);
         this.votesForTeam = await redis.hgetall(`mission:${missionUuid}:votes_for_team`);
-        if (this.voters.length > _.size(this.votesForTeam)) return;
+        if (this.voters.size > _.size(this.votesForTeam)) return;
+        console.log(`Team Vote complete: ${this.voters.size} > ${_.size(this.votesForTeam)}`);
 
         const numYesVotes = this.playersWhoVotedYesForTeam.length;
         const numNoVotes = this.playersWhoVotedNoForTeam.length;
         const isTeamAccepted = numYesVotes > numNoVotes;
         this.stage = (isTeamAccepted ? MISSION_STAGES.VOTING_ON_MISSION : MISSION_STAGES.TEAM_DENIED);
         await redis.set(`mission:${missionUuid}:stage`, this.stage);
+        console.log(`mission stage: ${this.stage} - yes: ${numYesVotes} - no: ${numNoVotes}`);
     }
 
     async addMissionVote(userId, vote) {
@@ -371,16 +386,18 @@ class Mission {
 
         await redis.hset(`mission:${missionUuid}:votes_for_mission`, userId, vote);
         this.votesForMission = await redis.hgetall(`mission:${missionUuid}:votes_for_mission`);
-        if (this.team.length > _.size(this.votesForMission)) return;
+        if (this.team.size > _.size(this.votesForMission)) return;
+        console.log(`Mission Vote complete: ${this.team.size} > ${_.size(this.votesForMission)}`);
 
         const numNoVotes = this.playersWhoVotedNoForMission.length;
         const isMissionSuccessful = (numNoVotes > this.numNoVotesForMissionFail);
         this.stage = (isMissionSuccessful ? MISSION_STAGES.MISSION_SUCCESS : MISSION_STAGES.MISSION_FAIL);
         await redis.set(`mission:${missionUuid}:stage`, this.stage);
+        console.log(`mission stage: ${this.stage} - no: ${numNoVotes}`);
     }
 
     static async fetch(missionUuid) {
-        const missionNum = await redis.set(`mission:${missionUuid}:mission_num`);
+        const missionNum = await redis.get(`mission:${missionUuid}:mission_num`);
         const stage = await redis.get(`mission:${missionUuid}:stage`);
         const leader = await redis.get(`mission:${missionUuid}:leader`);
         const team = await redis.smembers(`mission:${missionUuid}:team`);

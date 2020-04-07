@@ -11,13 +11,19 @@ const app = new App({
     signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
-function postEphemeral(channelId, userId, context, message) {
-    app.client.chat.postEphemeral({
-        token: context.botToken,
-        channel: channelId,
-        user: userId,
-        ...message
-    });
+async function postEphemeral(channelId, userId, context, message) {
+    try {
+        await app.client.chat.postEphemeral({
+            token: context.botToken,
+            channel: channelId,
+            user: userId,
+            ...message
+        });        
+    } catch (err) {
+        console.log(`Message error:\n${JSON.stringify(message, null, 2)}`);
+        console.log(`error: ${err}`);
+        console.error(err);
+    }
 }
 
 // SLASH COMMAND ENDPOINT
@@ -32,10 +38,14 @@ app.command('/spygame', async ({command, ack, respond}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
+
         game = (channel.gameUuid ? await SpyGame.fetch(channel.gameUuid) : null);
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) respond(err.slackMessage);
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.manageGame(game));
@@ -54,12 +64,16 @@ app.action('new_game', async ({body, ack, respond, say}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
+
         game = await channel.createGame();
         await game.addPlayer(userId);
     } catch (err) {
         console.error(err);
         if (err instanceof SlackGameError) respond(err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.gameCreated());
@@ -78,6 +92,7 @@ app.action('join_game', async ({body, ack, respond, say, context}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
 
         game = await SpyGame.fetch(channel.gameUuid); // should always exist at this point
         if (game.players.has(userId))
@@ -86,15 +101,17 @@ app.action('join_game', async ({body, ack, respond, say, context}) => {
         await game.addPlayer(userId);
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.joinGame(game));
     say(messages.userJoinedGame(userId));
 });
 
-app.action('cancel_game', async ({body, ack, respond}) => {
+app.action('cancel_game', async ({body, ack, say, respond, context}) => {
     console.log(`ACTION: cancel_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -106,6 +123,7 @@ app.action('cancel_game', async ({body, ack, respond}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
         
         game = await SpyGame.fetch(channel.gameUuid);
         if (!game)
@@ -116,8 +134,10 @@ app.action('cancel_game', async ({body, ack, respond}) => {
 
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.gameCancelled());
@@ -136,6 +156,7 @@ app.action('start_game', async ({body, ack, respond, say, context}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
         
         game = await SpyGame.fetch(channel.gameUuid);
         if (!game)
@@ -146,24 +167,27 @@ app.action('start_game', async ({body, ack, respond, say, context}) => {
 
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.gameStarted());
     say(messages.gameStartedBy(userId));
 
-    game.spies.forEach(player => postEphemeral(channel, player, context, messages.youAreASpy()))
-    Array.from(game.players)
+    await Promise.all(Array.from(game.spies)
+        .map(player => postEphemeral(channelId, player, context, messages.youAreASpy(player, game))));
+    await Promise.all(Array.from(game.players)
         .filter(player => !game.spies.has(player))
-        .forEach(player => postEphemeral(channel, player, context, messages.youAreAGoodGuy()))
+        .map(player => postEphemeral(channelId, player, context, messages.youAreAGoodGuy())));
 
     say(messages.gameSummary(game));
 
-    postEphemeral(channel, mission.leader, context, messages.chooseTeam(game));
-    Array.from(game.players)
+    await postEphemeral(channelId, mission.leader, context, messages.chooseTeam(game));
+    await Promise.all(Array.from(game.players)
         .filter(player => mission.leader !== player)
-        .forEach(player => postEphemeral(channel, player, context, messages.playerIsChoosingTeam(mission.leader)));
+        .map(player => postEphemeral(channelId, player, context, messages.playerIsChoosingTeam(mission.leader))));
 });
 
 app.action('choose_team', async ({body, ack, respond, context}) => {
@@ -178,6 +202,7 @@ app.action('choose_team', async ({body, ack, respond, context}) => {
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
         
         game = await SpyGame.fetch(channel.gameUuid);
         if (!game)
@@ -187,20 +212,23 @@ app.action('choose_team', async ({body, ack, respond, context}) => {
         if (!mission)
             throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
 
-        const team = action.actions.selected_options.map(option => option.value);
+        const team = body.actions[0].selected_options.map(option => option.value);
         await mission.chooseTeam(userId, team);
 
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.teamChoosen());
-    game.players.forEach(player => postEphemeral(channel, player, context, messages.voteOnTeam(mission)));
+    await Promise.all(Array.from(game.players)
+        .map(player => postEphemeral(channelId, player, context, messages.voteOnTeam(mission))));
 });
 
-app.action('vote_on_team', async ({body, ack, respond, context}) => {
+const voteOnTeam = async ({body, ack, respond, say, context}, vote) => {
     console.log(`ACTION: vote_on_team\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -208,10 +236,11 @@ app.action('vote_on_team', async ({body, ack, respond, context}) => {
     const channelId = body.channel.id;
     const userId = body.user.id;
 
-    let channel, game, mission, vote, nextMission;
+    let channel, game, mission, nextMission;
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
         
         game = await SpyGame.fetch(channel.gameUuid);
         if (!game)
@@ -221,34 +250,40 @@ app.action('vote_on_team', async ({body, ack, respond, context}) => {
         if (!mission)
             throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
 
-        vote = (body.actions[0].value === 'yes' ? true : false);
         await mission.addTeamVote(userId, vote);
-        if (mission.isTeamVotingComplete && !mission.isTeamAccepted)
+        if (mission.isTeamVoteComplete && !mission.isTeamAccepted) {
+            await game.discardCurrentMission();
             nextMission = await game.startNewMission();
-
+        }
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
-    respond(messages.votedFor(vote));
+    respond(messages.votedForTeam(vote));
 
-    if (!mission.isTeamVotingComplete) return;
+    if (!mission.isTeamVoteComplete) return;
     say(messages.teamVoteResults(mission));
 
     if (mission.isTeamAccepted) {
         say(messages.teamIsVotingOnMission(game, mission));
-        mission.team.forEach(player => postEphemeral(channel, player, context, messages.voteOnMission(mission)));
+        await Promise.all(Array.from(mission.team)
+            .map(player => postEphemeral(channelId, player, context, messages.voteOnMission(mission))));
     } else {
-        postEphemeral(channel, nextMission.leader, context, messages.chooseTeam(game));
-        Array.from(game.players)
+        await postEphemeral(channelId, nextMission.leader, context, messages.chooseTeam(game));
+        await Promise.all(Array.from(game.players)
             .filter(player => nextMission.leader !== player)
-            .forEach(player => postEphemeral(channel, player, context, messages.playerIsChoosingTeam(nextMission.leader)));
+            .map(player => postEphemeral(channelId, player, context, messages.playerIsChoosingTeam(nextMission.leader))));
     }
-});
+};
 
-app.action('vote_on_mission', async ({body, ack, respond, context}) => {
+app.action('vote_yes_on_team', (params) => voteOnTeam(params, true));
+app.action('vote_no_on_team', (params) => voteOnTeam(params, false));
+
+const voteOnMission = async ({body, ack, respond, context}, vote) => {
     console.log(`ACTION: vote_on_mission\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -256,10 +291,11 @@ app.action('vote_on_mission', async ({body, ack, respond, context}) => {
     const channelId = body.channel.id;
     const userId = body.user.id;
 
-    let channel, game, mission, vote, nextMission;
+    let channel, game, mission, nextMission;
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
         
         game = await SpyGame.fetch(channel.gameUuid);
         if (!game)
@@ -269,20 +305,22 @@ app.action('vote_on_mission', async ({body, ack, respond, context}) => {
         if (!mission)
             throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
 
-        vote = (body.actions[0].value === 'yes' ? true : false);
         await mission.addMissionVote(userId, vote);
-
-        if (mission.isMissionComplete)
+        if (mission.isMissionComplete) {
             await game.completeMission(mission);
-        if (!game.isGameOver)
-            nextMission = await game.startNewMission();
-        else
-            await game.removeGame();
+
+            if (!game.isGameOver)
+                nextMission = await game.startNewMission();
+            else
+                await game.removeGame();
+        }
 
     } catch (err) {
         console.error(err);
-        if (err instanceof SlackGameError) postEphemeral(channelId, userId, context, err.slackMessage);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
         return;
+    } finally {
+        if (channel) await channel.unlockChannel();
     }
 
     respond(messages.votedForMission(vote));
@@ -294,12 +332,15 @@ app.action('vote_on_mission', async ({body, ack, respond, context}) => {
     if (game.isGameOver) {
         say(messages.gameOver(game));
     } else {
-        postEphemeral(channel, nextMission.leader, context, messages.chooseTeam(game));
-        Array.from(game.players)
+        await postEphemeral(channelId, nextMission.leader, context, messages.chooseTeam(game));
+        await Promise.all(Array.from(game.players)
             .filter(player => nextMission.leader !== player)
-            .forEach(player => postEphemeral(channel, player, context, messages.playerIsChoosingTeam(nextMission.leader)));
+            .map(player => postEphemeral(channelId, player, context, messages.playerIsChoosingTeam(nextMission.leader))));
     }
-});
+};
+
+app.action('vote_yes_on_mission', (params) => voteOnMission(params, true));
+app.action('vote_no_on_mission', (params) => voteOnMission(params, false));
 
 (async () => {
     // Start your app

@@ -84,9 +84,19 @@ const gameStarted = () => ({text: `Game started!`});
 
 const gameStartedBy = (userId) => ({text: `<@${userId}> started the game.`});
 
-const youAreASpy = () => ({text: `You are a spy!`});
+const youAreASpy = (userId, game) => ({
+    blocks: [{
+        type: "section",
+        text: {
+            type: "mrkdwn", 
+            text: `You are a spy! :smiling_imp:\nOther Spies: ${Array.from(game.spies)
+                .filter(player => player !== userId)
+                .map(player => `<@${player}>`)}`
+        }
+    }]
+});
 
-const youAreAGoodGuy = () => ({text: `You are a good guy!`});
+const youAreAGoodGuy = () => ({text: `You are a good guy! :innocent:`});
 
 const gameSummary = (game) => ({
     blocks: [
@@ -94,7 +104,7 @@ const gameSummary = (game) => ({
         spacing(),
         gameSummaryTitleSection(),
         gameSummaryPlayersSection(game),
-        gameSummaryMissionsSection(game),
+        ...gameSummaryMissionsSection(game),
     ]
 });
 
@@ -126,7 +136,7 @@ const gameSummaryPlayersSection = (game) => ({
         type: "mrkdwn",
         text: `*Players:*\n<@${game.currentLeader}> ${game.leaderQueue
             .filter(player => player !== game.currentLeader)
-            .map(player => `<@${player}`)}`
+            .map(player => `<@${player}>`)}`
     }
 });
 
@@ -134,17 +144,20 @@ const gameSummaryMissionsSection = (game) => {
     const sections = [{type: "section", text: {type: "mrkdwn", text: "*Missions*"}}];
     const missionIcons = [':one:', ':two:', ':three:', ':four:', ':five:'];
     
-    game.missionsCompletedInOrder.forEach((missionUuid, index) => {
+    for (let index = 0; index < game.numMisions; index++) {
+        const missionUuid = (game.missionsCompletedInOrder.length > index ? game.missionsCompletedInOrder[index] : null);
         const isComplete = game.missionsCompleted.has(missionUuid);
         const isSuccessful = game.missionsWon.has(missionUuid);
 
-        sections.append(gameSummaryMissionsSectionRow({
+        sections.push(gameSummaryMissionsSectionRow({
             missionNumIcon: missionIcons[index],
             missionStatusIcon: (isComplete ? (isSuccessful ? ':heavy_check_mark:' : ':x:') : ':grey_question:'),
             teamSize: game.gameConfig.missionTeamSizes[index],
             votesToFail: game.gameConfig.missionNumNoVotesForFail[index],
         }));
-    });
+    }
+
+    return sections;
 };
 
 const gameSummaryMissionsSectionRow = ({missionNumIcon, missionStatusIcon, teamSize, votesToFail}) => ({
@@ -169,6 +182,7 @@ const chooseTeam = (game) => ({
                 text: {type: "plain_text", text: `<@${player}>`},
                 value: player
             })),
+            action_id: 'choose_team',
             max_selected_items: game.currentMissionTeamSize
         }
     }]
@@ -190,11 +204,13 @@ const voteOnTeam = (mission) => ({
         elements: [{
             type: "button",
             text: {type: "plain_text", text: "Vote Yes  :heavy_check_mark:", emoji: true},
-            value: "yes"
+            value: "yes",
+            action_id: "vote_yes_on_team",
         }, {
             type: "button",
             text: {type: "plain_text", text: "Vote No  :x:", emoji: true},
-            value: "no"
+            value: "no",
+            action_id: "vote_no_on_team",
         }]
     }, {
         type: "context",
@@ -240,7 +256,7 @@ const teamIsVotingOnMission = (game, mission) => ({
         type: "section",
         text: {
             type: "mrkdwn",
-            text: `*Mission Team:*\n${mission.team.map(player => `<@${player}`)}`
+            text: `*Mission Team:*\n${Array.from(mission.team).map(player => `<@${player}>`)}`
         }
     }, {
         type: "context",
@@ -265,11 +281,13 @@ const voteOnMission = (mission) => ({
         elements: [{
             type: "button",
             text: {type: "plain_text", text: "Succeed Mission  :heavy_check_mark:", emoji: true},
-            value: "yes"
+            value: "yes",
+            action_id: "vote_yes_on_mission",
         }, {
             type: "button",
             text: {type: "plain_text", text: "Fail Mission  :x:", emoji: true},
-            value: "no"
+            value: "no",
+            action_id: "vote_no_on_mission",
         }]
     }, {
         type: "context",
