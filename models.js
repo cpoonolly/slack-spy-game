@@ -235,13 +235,15 @@ class SpyGame {
         this.currentMission = null;
         console.log(`setting currentMission = ${this.currentMission}`);
 
+        console.log(`missionsCompleted: ${this.numMissionsCompleted}/${this.numMisions}`);
+        console.log(`missionsFailed: ${this.missionsLost.size}/${this.maxMissionFails}`);
+        const isGameComplete = this.numMissionsCompleted >= this.numMisions;
         const isGameFail = this.missionsLost.size >= this.maxMissionFails;
-        if (this.numMissionsCompleted < this.numMisions || isGameFail) return;
+        if (!isGameComplete && !isGameFail) return;
+
         this.stage = (isGameFail ? GAME_STAGE.GAME_FAIL : GAME_STAGE.GAME_SUCCESS);
         await redis.set(`game:${gameUuid}:stage`, this.stage);
         console.log(`game - stage: ${this.stage}`);
-        console.log(`missionsCompleted: ${this.numMissionsCompleted}/${this.numMisions}`);
-        console.log(`missionsFailed: ${this.missionsLost.size}/${this.maxMissionFails}`);
     }
 
     async cancelGame(userId) {

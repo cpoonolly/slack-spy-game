@@ -320,25 +320,32 @@ const gameOver = (game) => ({
     blocks: [
         spacing(),
         {
-			"type": "section",
-			"text": {
-				"type": "mrkdwn",
-				"text": ":earth_asia:       *GAME OVER*       :earth_americas:"
+			type: "section",
+			text: {
+				type: "mrkdwn",
+				text: ":earth_asia:       *GAME OVER*       :earth_americas:"
 			}
 		},
-        (game.isSuccessful ? {
-            type: "section",
-            text: {
-                type: "mrkdwn",
-                text: ":smiling_imp:          Spies Win          :smiling_imp:"
-            }
-        } : {
+        (game.isGameSuccessful ? {
             type: "section",
             text: {
                 type: "mrkdwn",
                 text: ":innocent:     Good Guys Win     :innocent:"
             }
-        })  
+        } : {
+            type: "section",
+            text: {
+                type: "mrkdwn",
+                text: ":smiling_imp:          Spies Win          :smiling_imp:"
+            }
+        }),
+        {
+            type: "section",
+            text: {
+                type: "mrkdwn",
+                text: `The Spies:\n${Array.from(game.spies).map(player => `<@${player}>`)}`
+            }
+        }
     ]
 });
 

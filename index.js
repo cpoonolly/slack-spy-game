@@ -20,8 +20,21 @@ async function postEphemeral(channelId, userId, context, message) {
             ...message
         });        
     } catch (err) {
-        console.log(`Message error:\n${JSON.stringify(message, null, 2)}`);
-        console.log(`error: ${err}`);
+        console.log(`ephemeral message error:\n${JSON.stringify(message, null, 2)}`);
+        console.error(err);
+    }
+}
+
+async function postChat(channelId, userId, context, message) {
+    try {
+        await app.client.chat.postMessage({
+            token: context.botToken,
+            channel: channelId,
+            user: userId,
+            ...message
+        });        
+    } catch (err) {
+        console.log(`chat message error:\n${JSON.stringify(message, null, 2)}`);
         console.error(err);
     }
 }
@@ -80,7 +93,7 @@ app.action('new_game', async ({body, ack, respond, say}) => {
     say(messages.joinGame(game));
 });
 
-app.action('join_game', async ({body, ack, respond, say, context}) => {
+app.action('join_game', async ({body, ack, respond, context}) => {
     console.log(`ACTION: join_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -108,10 +121,10 @@ app.action('join_game', async ({body, ack, respond, say, context}) => {
     }
 
     respond(messages.joinGame(game));
-    say(messages.userJoinedGame(userId));
+    await postChat(channelId, userId, context, messages.userJoinedGame(userId));
 });
 
-app.action('cancel_game', async ({body, ack, say, respond, context}) => {
+app.action('cancel_game', async ({body, ack, respond, context}) => {
     console.log(`ACTION: cancel_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -141,10 +154,10 @@ app.action('cancel_game', async ({body, ack, say, respond, context}) => {
     }
 
     respond(messages.gameCancelled());
-    say(messages.gameCancelledBy(userId));
+    await postChat(channelId, userId, context, messages.gameCancelledBy(userId));
 });
 
-app.action('start_game', async ({body, ack, respond, say, context}) => {
+app.action('start_game', async ({body, ack, respond, context}) => {
     console.log(`ACTION: start_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -174,15 +187,15 @@ app.action('start_game', async ({body, ack, respond, say, context}) => {
     }
 
     respond(messages.gameStarted());
-    say(messages.gameStartedBy(userId));
+    await postChat(channelId, userId, context, messages.gameStartedBy(userId));
+
+    await postChat(channelId, userId, context, messages.gameSummary(game));
 
     await Promise.all(Array.from(game.spies)
         .map(player => postEphemeral(channelId, player, context, messages.youAreASpy(player, game))));
     await Promise.all(Array.from(game.players)
         .filter(player => !game.spies.has(player))
         .map(player => postEphemeral(channelId, player, context, messages.youAreAGoodGuy())));
-
-    say(messages.gameSummary(game));
 
     await postEphemeral(channelId, mission.leader, context, messages.chooseTeam(game));
     await Promise.all(Array.from(game.players)
@@ -228,7 +241,7 @@ app.action('choose_team', async ({body, ack, respond, context}) => {
         .map(player => postEphemeral(channelId, player, context, messages.voteOnTeam(mission))));
 });
 
-const voteOnTeam = async ({body, ack, respond, say, context}, vote) => {
+const voteOnTeam = async ({body, ack, respond, context}, vote) => {
     console.log(`ACTION: vote_on_team\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -266,10 +279,10 @@ const voteOnTeam = async ({body, ack, respond, say, context}, vote) => {
     respond(messages.votedForTeam(vote));
 
     if (!mission.isTeamVoteComplete) return;
-    say(messages.teamVoteResults(mission));
+    await postChat(channelId, userId, context, messages.teamVoteResults(mission));
 
     if (mission.isTeamAccepted) {
-        say(messages.teamIsVotingOnMission(game, mission));
+        await postChat(channelId, userId, context, messages.teamIsVotingOnMission(game, mission));
         await Promise.all(Array.from(mission.team)
             .map(player => postEphemeral(channelId, player, context, messages.voteOnMission(mission))));
     } else {
@@ -283,7 +296,7 @@ const voteOnTeam = async ({body, ack, respond, say, context}, vote) => {
 app.action('vote_yes_on_team', (params) => voteOnTeam(params, true));
 app.action('vote_no_on_team', (params) => voteOnTeam(params, false));
 
-const voteOnMission = async ({body, ack, respond, say, context}, vote) => {
+const voteOnMission = async ({body, ack, respond, context}, vote) => {
     console.log(`ACTION: vote_on_mission\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -326,11 +339,11 @@ const voteOnMission = async ({body, ack, respond, say, context}, vote) => {
     respond(messages.votedForMission(vote));
         
     if (!mission.isMissionComplete) return;
-    say(messages.missionVoteResults(mission));
-    say(messages.gameSummary(game));
+    await postChat(channelId, userId, context, messages.missionVoteResults(mission));
+    await postChat(channelId, userId, context, messages.gameSummary(game));
 
     if (game.isGameOver) {
-        say(messages.gameOver(game));
+        await postChat(channelId, userId, context, messages.gameOver(game));
     } else {
         await postEphemeral(channelId, nextMission.leader, context, messages.chooseTeam(game));
         await Promise.all(Array.from(game.players)
