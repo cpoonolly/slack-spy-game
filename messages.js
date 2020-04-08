@@ -153,7 +153,7 @@ const gameSummaryMissionsSection = (game) => {
             missionNumIcon: missionIcons[index],
             missionStatusIcon: (isComplete ? (isSuccessful ? ':heavy_check_mark:' : ':x:') : ':grey_question:'),
             teamSize: game.gameConfig.missionTeamSizes[index],
-            votesToFail: game.gameConfig.missionNumNoVotesForFail[index],
+            votesToFail: game.gameConfig.missionMinNoVotesForFail[index],
         }));
     }
 
@@ -262,9 +262,9 @@ const teamIsVotingOnMission = (game, mission) => ({
         type: "context",
         elements: [{
             type: "plain_text",
-            text: game.currentMissionNumVotesForFail === 1 ?
+            text: game.currentMissionMinNoVotesForFail === 1 ?
                 `1 No vote will fail the mission` :
-                `${game.currentMissionNumVotesForFail} No votes will fail the mission`
+                `${game.currentMissionMinNoVotesForFail} No votes will fail the mission`
         }]
     }]
 });

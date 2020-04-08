@@ -283,7 +283,7 @@ const voteOnTeam = async ({body, ack, respond, say, context}, vote) => {
 app.action('vote_yes_on_team', (params) => voteOnTeam(params, true));
 app.action('vote_no_on_team', (params) => voteOnTeam(params, false));
 
-const voteOnMission = async ({body, ack, respond, context}, vote) => {
+const voteOnMission = async ({body, ack, respond, say, context}, vote) => {
     console.log(`ACTION: vote_on_mission\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -312,7 +312,7 @@ const voteOnMission = async ({body, ack, respond, context}, vote) => {
             if (!game.isGameOver)
                 nextMission = await game.startNewMission();
             else
-                await game.removeGame();
+                await channel.removeGame();
         }
 
     } catch (err) {
