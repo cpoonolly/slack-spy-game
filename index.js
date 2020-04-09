@@ -46,8 +46,9 @@ app.command('/spygame', async ({command, ack, respond}) => {
 
     const teamId = command.team_id;
     const channelId = command.channel_id;
+    const userId = command.user_id;
 
-    let channel, game;
+    let channel, game = null, mission = null;
 
     try {
         channel = await SlackChannel.fetch(teamId, channelId);
@@ -65,7 +66,7 @@ app.command('/spygame', async ({command, ack, respond}) => {
 });
 
 // INTERACTIVE MESSAGES SERVER
-app.action('new_game', async ({body, ack, respond, say}) => {
+app.action('new_game', async ({body, ack, respond, context}) => {
     console.log(`ACTION: new_game\n${JSON.stringify(body, null, 2)}`);
     ack();
 
@@ -90,7 +91,7 @@ app.action('new_game', async ({body, ack, respond, say}) => {
     }
 
     respond(messages.gameCreated());
-    say(messages.joinGame(game));
+    await postChat(channelId, userId, context, messages.waitingForPlayers(game));
 });
 
 app.action('join_game', async ({body, ack, respond, context}) => {
@@ -120,7 +121,7 @@ app.action('join_game', async ({body, ack, respond, context}) => {
         if (channel) await channel.unlockChannel();
     }
 
-    respond(messages.joinGame(game));
+    respond(messages.waitingForPlayers(game));
     await postChat(channelId, userId, context, messages.userJoinedGame(userId));
 });
 
@@ -155,6 +156,75 @@ app.action('cancel_game', async ({body, ack, respond, context}) => {
 
     respond(messages.gameCancelled());
     await postChat(channelId, userId, context, messages.gameCancelledBy(userId));
+});
+
+app.action('who_am_i', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: who_am_i\n${JSON.stringify(body, null, 2)}`);
+    ack();
+
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
+
+    let channel, game;
+
+    try {
+        channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
+        
+        game = await SpyGame.fetch(channel.gameUuid);
+        if (!game)
+            throw new SlackGameError(`Something went wrong - Game no longer available`, {teamId, channelId, userId});
+
+    } catch (err) {
+        console.error(err);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
+    } finally {
+        if (channel) await channel.unlockChannel();
+    }
+
+    respond(messages.whoAmI(game, userId));
+});
+
+app.action('what_do_i_do', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: what_do_i_do\n${JSON.stringify(body, null, 2)}`);
+    ack();
+
+    const teamId = body.team.id;
+    const channelId = body.channel.id;
+    const userId = body.user.id;
+
+    let channel, game;
+
+    try {
+        channel = await SlackChannel.fetch(teamId, channelId);
+        await channel.lockChannel();
+        
+        game = await SpyGame.fetch(channel.gameUuid);
+        if (!game)
+            throw new SlackGameError(`Something went wrong - Game no longer available`, {teamId, channelId, userId});
+
+        mission = await Mission.fetch(game.currentMission);
+        if (!mission)
+            throw new SlackGameError(`Something went wrong - Mission no longer available`, {teamId, channelId, userId});
+
+    } catch (err) {
+        console.error(err);
+        if (err instanceof SlackGameError) await postEphemeral(channelId, userId, context, err.slackMessage);
+        return;
+    } finally {
+        if (channel) await channel.unlockChannel();
+    }
+
+    respond(messages.whatDoIDoNow(game, mission, userId));
+});
+
+app.action('how_to_play', async ({body, ack, respond, context}) => {
+    console.log(`ACTION: how_to_play\n${JSON.stringify(body, null, 2)}`);
+    ack();
+
+    respond(messages.howToPlay());
 });
 
 app.action('start_game', async ({body, ack, respond, context}) => {
@@ -277,8 +347,11 @@ const voteOnTeam = async ({body, ack, respond, context}, vote) => {
     }
 
     respond(messages.votedForTeam(vote));
+    if (!mission.isTeamVoteComplete) {
+        await postChat(channelId, userId, context, messages.waitingOnTeamVotesFrom(mission));
+        return;
+    }
 
-    if (!mission.isTeamVoteComplete) return;
     await postChat(channelId, userId, context, messages.teamVoteResults(mission));
 
     if (mission.isTeamAccepted) {
@@ -337,8 +410,11 @@ const voteOnMission = async ({body, ack, respond, context}, vote) => {
     }
 
     respond(messages.votedForMission(vote));
+    if (!mission.isMissionComplete) {
+        await postChat(channelId, userId, context, messages.waitingOnMissionVotesFrom(mission));
+        return;
+    }
         
-    if (!mission.isMissionComplete) return;
     await postChat(channelId, userId, context, messages.missionVoteResults(mission));
     await postChat(channelId, userId, context, messages.gameSummary(game));
 

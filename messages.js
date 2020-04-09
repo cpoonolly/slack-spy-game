@@ -1,4 +1,4 @@
-const { MAX_NUM_PLAYERS, MIN_NUM_PLAYERS } = require('./constants');
+const { MAX_NUM_PLAYERS, MIN_NUM_PLAYERS, GAME_STAGE, MISSION_STAGES } = require('./constants');
 
 const gameCreated = () => ({text: `Game created!`});
 
@@ -6,24 +6,12 @@ const gameCancelled = () => ({text: `Game cancelled.`});
 
 const gameCancelledBy = (userId) => ({text: `Game cancelled by <@${userId}>`});
 
-const manageGame = (game) => {
-    if (game) {
-        return {text: `A Game is already in progress in this channel. Please wait until it's over.`};
-    }
-
-    return {
-        blocks: [{
-            type: "actions",
-            elements: [{
-                type: "button",
-                text: {type: "plain_text", text: "New Game"},
-                value: "new_game",
-                action_id: "new_game"
-            }]
-        }]
-    };
-};
-
+const newGameBtn = () => ({
+    type: "button",
+    text: {type: "plain_text", text: "New Game"},
+    value: "new_game",
+    action_id: "new_game"
+});
 
 const joinGameBtn = () => ({
     type: "button",
@@ -49,7 +37,115 @@ const startGameBtn = () => ({
     style: "primary",
 });
 
-const joinGame = (game) => {
+const whoAmIBtn = () => ({
+    type: "button",
+    text: {type: "plain_text", text: "Who am I?"},
+    value: "who_am_i",
+    action_id: "who_am_i",
+    style: "primary",
+});
+
+const whatDoIDoNowBtn = () => ({
+    type: "button",
+    text: {type: "plain_text", text: "What do I do now?"},
+    value: "what_do_i_do",
+    action_id: "what_do_i_do",
+    style: "primary",
+});
+
+const howToPlayBtn = () => ({
+    type: "button",
+    text: {type: "plain_text", text: "How to play."},
+    value: "how_to_play",
+    action_id: "how_to_play",
+    style: "primary",
+});
+
+const manageGame = (game) => {
+    if (!game) {
+        return {blocks: [{type: "actions", elements: [newGameBtn()]}]};
+    } else if (game.stage === GAME_STAGE.WAITING_FOR_PLAYERS) {
+        return waitingForPlayers(game);
+    }
+    
+    return {blocks: [{
+        type: "actions",
+        elements: [
+            whoAmIBtn(),
+            whatDoIDoNowBtn(),
+            howToPlayBtn(),
+            cancelGameBtn()
+        ]}
+    ]};
+};
+
+const whoAmI = (game, userId) => {
+    if (game.spies.has(userId)) {
+        return youAreASpy(userId, game);
+    } else {
+        return youAreAGoodGuy();
+    }
+};
+
+const whatDoIDoNow = (game, mission, userId) => {
+    if (!game.players.has(userId)) {
+        return {text: `Game in progress wait for it to finish - or ask someone to cancel it`};
+    } else if (mission.stage === MISSION_STAGES.CHOOSING_TEAM) {
+        if (userId === mission.leader)
+            return chooseTeam(game);
+        else
+            return playerIsChoosingTeam(mission.leader);
+    } else if (mission.stage === MISSION_STAGES.VOTING_ON_TEAM) {
+        if (userId in mission.votesForTeam)
+            return waitingOnTeamVotesFrom(mission);
+        else
+            return voteOnTeam(mission);
+    } else if (mission.stage === MISSION_STAGES.VOTING_ON_MISSION) {
+        if (userId in mission.votesForMission || !mission.team.has(userId))
+            return waitingOnMissionVotesFrom(mission);
+        else
+            return voteOnMission(mission);
+    }
+
+    return {text: 'Either the game is over - or something is in progress... either way sit tight...'};
+};
+
+const howToPlay = () => ({
+    blocks: [{
+        type: "section",
+        text: {
+            type: "mrkdwn",
+            text: 
+`
+**HOW TO PLAY**
+
+**Start of the game:**
+- There are 2 teams - spies & good guys
+- When the games starts each player is secretly told "You are a good guy" or "You are a spy".
+- If you are a spy KEEP IT TO YOURSELF! - You need to deceive the good guys in order to win
+- There are 5 missions - in order to win spies need to sabotage 3 out of 5 mission
+
+**Before the mission:**
+- Before each mission 1 player (the leader) chooses a team to go on the next mission
+- After the leader chooses a team - everyone then votes to accept or reject the team
+- If the team is rejected - a new leader is selected - they choose a new team - and the new team is voted on
+- This process continues over and over until a team is accepted for the mission
+
+**During the mission:**
+- Once a team is accepted the mission starts
+- Players on the team then vote to "Succeed" or "Fail" (sabotage) the mission
+- If any player on the team votes to fail the mission the mission is failed (NOTE: mission 4 requires 2 no votes)
+- Votes for the mission are anonymous - so no one knows who sabotaged the mission
+    (if you are a good guy you always want the mission to succeed)
+
+**End of the game:**
+- The game ends when either spies or good guys have won 3 missions
+`
+        }
+    }]
+});
+
+const waitingForPlayers = (game) => {
     const currentPlayersText = Array.from(game.players).map(userId => ` • <@${userId}>`).join('\n');
 
     let buttons, message;
@@ -223,6 +319,11 @@ const voteOnTeam = (mission) => ({
 
 const votedForTeam = (vote) => ({type: "mrkdwn", text: `You've voted ${vote ? 'yes' : 'no'} for the team.`});
 
+const waitingOnTeamVotesFrom = (mission) => ({
+    type: "mrkdwn",
+    text: `Waiting these players to vote on the team:\n${mission.playersWhoHaventVotedYetForTeam.map(player => `<@${player}>`)}`
+});
+
 const teamVoteResults = (mission) => ({
     blocks: [{
         type: "section",
@@ -300,6 +401,11 @@ const voteOnMission = (mission) => ({
 
 const votedForMission = (vote) => ({type: "mrkdwn", text: `You've voted ${vote ? 'yes' : 'no'} for the mission.`});
 
+const waitingOnMissionVotesFrom = (mission) => ({
+    type: "mrkdwn",
+    text: `Waiting these players to vote on the mission:\n${mission.playersWhoHaventVotedYetForMission.map(player => `<@${player}>`)}`
+});
+
 const missionVoteResults = (mission) => ({
     blocks: [{
         type: "section",
@@ -354,7 +460,7 @@ module.exports = {
     gameCreated,
     gameCancelled,
     gameCancelledBy,
-    joinGame,
+    waitingForPlayers,
     gameStarted,
     gameStartedBy,
     youAreASpy,
@@ -371,5 +477,10 @@ module.exports = {
     votedForMission,
     missionVoteResults,
     gameOver,
-    userJoinedGame
+    userJoinedGame,
+    whoAmI,
+    whatDoIDoNow,
+    howToPlay,
+    waitingOnMissionVotesFrom,
+    waitingOnTeamVotesFrom,
 }

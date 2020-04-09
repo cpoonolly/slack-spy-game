@@ -249,8 +249,6 @@ class SpyGame {
     async cancelGame(userId) {
         const {gameUuid} = this;
         
-        if (!this.players.has(userId))
-            throw new SlackGameError(`Only players in the game can cancel it.`, {gameUuid, userId, players: JSON.stringify(Array.from(this.players))});
         if (this.stage === GAME_STAGE.GAME_CANCELLED)
             throw new SlackGameError(`Game has already been cancelled.`, {gameUuid, userId});
 
@@ -321,12 +319,20 @@ class Mission {
         return Object.keys(this.votesForTeam).filter(player => this.votesForTeam[player] !== 'true');
     }
 
+    get playersWhoHaventVotedYetForTeam() {
+        return Array.from(this.voters).filter(player => !(player in this.votesForTeam));
+    }
+
     get playersWhoVotedYesForMission() {
         return Object.keys(this.votesForMission).filter(player => this.votesForMission[player] === 'true');
     }
 
     get playersWhoVotedNoForMission() {
         return Object.keys(this.votesForMission).filter(player => this.votesForMission[player] !== 'true');
+    }
+
+    get playersWhoHaventVotedYetForMission() {
+        return Array.from(this.team).filter(player => !(player in this.votesForMission));
     }
 
     get isTeamVoteComplete() {
