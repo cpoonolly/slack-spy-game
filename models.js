@@ -18,7 +18,7 @@ class SlackChannel {
         this.gameUuid = gameUuid;
     }
 
-    async createGame() {
+    async createGame(userId) {
         this.gameUuid = uuid();
         const {teamId, channelId, gameUuid} = this;
 
@@ -26,6 +26,7 @@ class SlackChannel {
             throw new SlackGameError(`Game already exists in this channel`, {teamId, channelId});
 
         await redis.set(`game:${gameUuid}:stage`, GAME_STAGE.WAITING_FOR_PLAYERS);
+        await redis.set(`game:${gameUuid}:admin`, userId);
         return await SpyGame.fetch(gameUuid);
     }
 
@@ -70,6 +71,7 @@ class SlackChannel {
 class SpyGame {
     constructor({
         gameUuid,
+        admin,
         players,
         missions,
         currentMission,
@@ -81,6 +83,7 @@ class SpyGame {
         leaderQueue
     }) {
         this.gameUuid = gameUuid;
+        this.admin = admin;
         this.stage = stage;
 
         this.players = new Set(players || []);
@@ -258,6 +261,7 @@ class SpyGame {
     }
 
     static async fetch(gameUuid) {
+        const admin = await redis.get(`game:${gameUuid}:admin`);
         const players = await redis.smembers(`game:${gameUuid}:players`);
         const missions = await redis.lrange(`game:${gameUuid}:missions`, 0, -1);
         const spies = await redis.smembers(`game:${gameUuid}:spies`);
@@ -272,6 +276,7 @@ class SpyGame {
 
         return new SpyGame({
             gameUuid,
+            admin,
             players,
             missions,
             spies,

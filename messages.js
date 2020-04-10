@@ -6,77 +6,57 @@ const gameCancelled = () => ({text: `Game cancelled.`});
 
 const gameCancelledBy = (userId) => ({text: `Game cancelled by <@${userId}>`});
 
-const newGameBtn = () => ({
+const actionBtn = (actionId, label) => ({
     type: "button",
-    text: {type: "plain_text", text: "New Game"},
-    value: "new_game",
-    action_id: "new_game"
+    text: {type: "plain_text", text: label},
+    value: actionId,
+    action_id: actionId
 });
 
-const joinGameBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "Join Game"},
-    value: "join_game",
-    action_id: "join_game",
-    style: "primary",
-});
+const newGameBtn = () => actionBtn("new_game", "New Game");
 
-const cancelGameBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "Cancel Game"},
-    value: "cancel_game",
-    action_id: "cancel_game",
-    style: "danger",
-});
+const joinGameBtn = () => actionBtn("join_game", "Join Game");
 
-const startGameBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "Start Game"},
-    value: "start_game",
-    action_id: "start_game",
-    style: "primary",
-});
+const cancelGameBtn = () => actionBtn("cancel_game", "Cancel Game");
 
-const whoAmIBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "Who am I?"},
-    value: "who_am_i",
-    action_id: "who_am_i",
-    style: "primary",
-});
+const startGameBtn = () => actionBtn("start_game", "Start Game");
 
-const whatDoIDoNowBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "What do I do now?"},
-    value: "what_do_i_do",
-    action_id: "what_do_i_do",
-    style: "primary",
-});
+const whoAmIBtn = () => actionBtn("who_am_i", "Who am I?");
 
-const howToPlayBtn = () => ({
-    type: "button",
-    text: {type: "plain_text", text: "How to play."},
-    value: "how_to_play",
-    action_id: "how_to_play",
-    style: "primary",
-});
+const whatDoIDoNowBtn = () => actionBtn("what_do_i_do", "What do I do now?");
 
-const manageGame = (game) => {
+const howToPlayBtn = () => actionBtn("how_to_play", "How to play.");
+
+const adminBtns = [
+    actionBtn("admin_notify_spies", "Notify Spies"),
+    actionBtn("admin_notify_good_guys", "Notify Good Guys"),
+    actionBtn("admin_start_mission", "Start Mission"),
+    actionBtn("admin_start_team_vote", "Start Team Vote"),
+    actionBtn("admin_show_team_vote_status", "Show Team Vote Status"),
+    actionBtn("admin_start_mission_vote", "Start Mission Vote"),
+    actionBtn("admin_show_mission_vote_status", "Show Mission Vote Status"),
+    actionBtn("admin_show_mission_vote_results", "Show Mission Results"),
+];
+
+const manageGame = (userId, game) => {
     if (!game) {
         return {blocks: [{type: "actions", elements: [newGameBtn()]}]};
     } else if (game.stage === GAME_STAGE.WAITING_FOR_PLAYERS) {
         return waitingForPlayers(game);
     }
+
+    buttons = [
+        whoAmIBtn(),
+        whatDoIDoNowBtn(),
+        howToPlayBtn(),
+        cancelGameBtn()
+    ];
+
+    if (userId === game.admin) {
+        buttons = buttons.concat(adminBtns)
+    }
     
-    return {blocks: [{
-        type: "actions",
-        elements: [
-            whoAmIBtn(),
-            whatDoIDoNowBtn(),
-            howToPlayBtn(),
-            cancelGameBtn()
-        ]}
-    ]};
+    return {blocks: [{type: "actions", elements: buttons}]};
 };
 
 const whoAmI = (game, userId) => {
@@ -97,12 +77,12 @@ const whatDoIDoNow = (game, mission, userId) => {
             return playerIsChoosingTeam(mission.leader);
     } else if (mission.stage === MISSION_STAGES.VOTING_ON_TEAM) {
         if (userId in mission.votesForTeam)
-            return waitingOnTeamVotesFrom(mission);
+            return teamVoteStatus(mission);
         else
             return voteOnTeam(mission);
     } else if (mission.stage === MISSION_STAGES.VOTING_ON_MISSION) {
         if (userId in mission.votesForMission || !mission.team.has(userId))
-            return waitingOnMissionVotesFrom(mission);
+            return missionVoteStatus(mission);
         else
             return voteOnMission(mission);
     }
@@ -284,7 +264,17 @@ const chooseTeam = (game) => ({
     }]
 });
 
-const playerIsChoosingTeam = (leader) => ({text: `<@${leader}> is the leader. They're choosing a team for the next mission.`})
+const playerIsChoosingTeam = (leader) => ({text: `<@${leader}> is the leader. They're choosing a team for the next mission.`});
+
+const playerHasChoosenTeam = (mission) => ({
+    blocks: [{
+        type: "section",
+        text: {
+            type: "mrkdwn",
+            text: `<@${mission.leader}> selected a team.\n*Team:*\n${Array.from(mission.team).map(player => `<@${player}>`)}`
+        }
+    }]
+});
 
 const teamChoosen = () => ({text: `Team choosen!`});
 
@@ -319,9 +309,19 @@ const voteOnTeam = (mission) => ({
 
 const votedForTeam = (vote) => ({type: "mrkdwn", text: `You've voted ${vote ? 'yes' : 'no'} for the team.`});
 
-const waitingOnTeamVotesFrom = (mission) => ({
-    type: "mrkdwn",
-    text: `Waiting these players to vote on the team:\n${mission.playersWhoHaventVotedYetForTeam.map(player => `<@${player}>`)}`
+const playerVotedForTeam = (player) => ({type: "mrkdwn", text: `<@${player}> voted for the team.`});
+
+const teamVoteStatus = (mission) => ({
+    blocks: [{
+        type: "section",
+        text: {
+            type: "mrkdwn",
+            text: `<@${mission.leader}> selected a team.\n*Team:*\n${Array.from(mission.team).map(player => `<@${player}>`)}`
+        }
+    }, {
+        type: "mrkdwn",
+        text: `Waiting these players to vote on the team:\n${mission.playersWhoHaventVotedYetForTeam.map(player => `<@${player}>`)}`
+    }]
 });
 
 const teamVoteResults = (mission) => ({
@@ -401,10 +401,12 @@ const voteOnMission = (mission) => ({
 
 const votedForMission = (vote) => ({type: "mrkdwn", text: `You've voted ${vote ? 'yes' : 'no'} for the mission.`});
 
-const waitingOnMissionVotesFrom = (mission) => ({
+const missionVoteStatus = (mission) => ({
     type: "mrkdwn",
     text: `Waiting these players to vote on the mission:\n${mission.playersWhoHaventVotedYetForMission.map(player => `<@${player}>`)}`
 });
+
+const missionComplete = () => ({text: 'The team has finished voting on the mission!'})
 
 const missionVoteResults = (mission) => ({
     blocks: [{
@@ -468,19 +470,22 @@ module.exports = {
     gameSummary,
     chooseTeam,
     playerIsChoosingTeam,
+    playerHasChoosenTeam,
     teamChoosen,
     voteOnTeam,
     votedForTeam,
+    playerVotedForTeam,
+    teamVoteStatus,
     teamVoteResults,
     teamIsVotingOnMission,
     voteOnMission,
     votedForMission,
     missionVoteResults,
+    missionComplete,
     gameOver,
     userJoinedGame,
     whoAmI,
     whatDoIDoNow,
     howToPlay,
-    waitingOnMissionVotesFrom,
-    waitingOnTeamVotesFrom,
+    missionVoteStatus,
 }
